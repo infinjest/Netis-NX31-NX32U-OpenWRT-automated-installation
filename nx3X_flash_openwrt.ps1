@@ -14,6 +14,11 @@ param(
     [string]$Tftpd64Path = "$PSScriptRoot\tftpd64_portable_v4.74\tftpd64.exe"
 )
 
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "Скрипт запущен БЕЗ прав администратора. Сетевые операции могут быть ограничены."
+    Write-Host "Рекомендуется перезапустить от имени администратора." -ForegroundColor Yellow
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -39,8 +44,9 @@ if (-not (Test-Connection -ComputerName $RouterIP -Count 1 -Quiet -ErrorAction S
 Write-OK "Роутер $RouterIP в сети"
 
 # Проверка папки и файлов прошивки
-$FirmwareDir = Resolve-Path $FirmwareDir -ErrorAction SilentlyContinue
-if (-not $FirmwareDir) { Write-Fail "Папка с прошивкой не найдена: $FirmwareDir" }
+$resolved = Resolve-Path $FirmwareDir -ErrorAction SilentlyContinue
+if (-not $resolved) { Write-Fail "Папка с прошивкой не найдена: $FirmwareDir" }
+$FirmwareDir = $resolved.Path
 
 function Find-Fw { param($pattern)
     $f = Get-ChildItem (Join-Path $FirmwareDir $pattern) -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -84,13 +90,14 @@ $Password = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropS
 
 # ─── Вспомогательные функции SSH/SCP (С жестким контролем ошибок) ────────────
 function Invoke-SSH {
-    param([string]$Cmd, [switch]$IgnoreError)
+    param([string]$Cmd, [switch]$IgnoreError, [switch]$Quiet)  # ← добавили Quiet
     $out = & $PlinkPath -ssh -pw $Password -batch -no-antispoof "$User@$RouterIP" $Cmd 2>&1
     $exitCode = $LASTEXITCODE
-    
+
     if ($exitCode -ne 0 -and -not $IgnoreError) {
         Write-Fail "SSH ошибка (код $exitCode) при выполнении: $Cmd`n       Вывод роутера: $out"
     }
+    if ($Quiet) { return }                                       # ← ничего не возвращаем
     return @{ Output = $out; ExitCode = $exitCode }
 }
 
@@ -144,6 +151,46 @@ function Wait-Router {
     return $false
 }
 
+# ─── ФУНКЦИИ УПРАВЛЕНИЯ TFTP ──────────────────────────────────────────────────
+function Start-TftpServer {
+    param([string]$Root, [string]$TftpdPath)
+    
+    $TftpdDir = Split-Path $TftpdPath -Parent
+    $TftpdIni = Join-Path $TftpdDir "tftpd64.ini"
+    
+    # Сохраняем состояние для отката
+    $script:IniBackup = if (Test-Path $TftpdIni) { Get-Content $TftpdIni -Raw } else { $null }
+    $script:IniPath = $TftpdIni
+    
+    # Генерируем временный конфиг
+    @"
+[TFTPD]
+Base_Directory=$Root
+Bind_Address_Or_Interface=192.168.1.254
+Allow_Overwrite=1
+TFTP_Timeout=3
+TFTP_Max_Retransmit=5
+"@ | Set-Content -Path $TftpdIni -Encoding ASCII
+
+    $proc = Start-Process -FilePath $TftpdPath -PassThru -WindowStyle Minimized
+    return $proc
+}
+
+function Stop-TftpServer {
+    param([System.Diagnostics.Process]$Process)
+    
+    if ($Process) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    }
+    
+    # Восстановление INI
+    if ($null -ne $script:IniBackup) {
+        Set-Content -Path $script:IniPath -Value $script:IniBackup -Encoding ASCII
+    } elseif (Test-Path $script:IniPath) {
+        Remove-Item $script:IniPath -Force
+    }
+}
+
 # ─── ФАЗА 1: MTD-БЭКАП ───────────────────────────────────────────────────────
 Write-Step "ФАЗА 1 — MTD-БЭКАП"
 if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null }
@@ -154,7 +201,7 @@ foreach ($p in $Partitions) {
     $id = $p.Split(":")[0]; $name = $p.Split(":")[1]
     $gz = "${id}_${name}.bin.gz"
     Write-Host "  Сжатие $name ($id)..."
-    Invoke-SSH "cat /dev/$id | gzip -1 -c > /tmp/$gz" | Out-Null
+    Invoke-SSH "cat /dev/$id | gzip -1 -c > /tmp/$gz" -Quiet
 }
 Write-OK "Все разделы успешно сжаты в /tmp/"
 
@@ -179,7 +226,7 @@ Invoke-Upload $PreloaderFile.FullName "/tmp/$($PreloaderFile.Name)"
 
 # Прошивка FIP (Обязательный шаг, при ошибке скрипт остановится)
 Write-Host "  Запись $($FipFile.Name) в раздел FIP..."
-Invoke-SSH "mtd write /tmp/$($FipFile.Name) FIP" | Out-Null
+Invoke-SSH "mtd write /tmp/$($FipFile.Name) FIP" -Quiet
 Write-OK "Раздел FIP успешно обновлен"
 
 # Прошивка BL2 (Возможна аппаратная/программная блокировка на стоке)
@@ -197,26 +244,28 @@ if ($bl2Result.ExitCode -ne 0) {
 # ─── ФАЗА 4: TFTP + СТИРАНИЕ UBI + ПЕРЕЗАГРУЗКА ─────────────────────────────
 Write-Step "ФАЗА 4 — ЗАПУСК TFTP, СТИРАНИЕ UBI, ПЕРЕЗАГРУЗКА"
 
-$TftpRoot = $FirmwareDir.Path
+$TftpRoot = $FirmwareDir
 Copy-Item $RecoveryFile.FullName (Join-Path $TftpRoot $RecoveryFile.Name) -Force
 
 Write-Host "  Запускаю tftpd64..."
-$TftpdProc = Start-Process -FilePath $Tftpd64Path -ArgumentList "--config", $TftpRoot -PassThru -WindowStyle Minimized
+$TftpdProc = Start-TftpServer -Root $TftpRoot -TftpdPath $Tftpd64Path
 Start-Sleep -Seconds 2
 Write-OK "tftpd64 запущен"
 
-Write-Host "  Стираю UBI и отправляю роутер в перезагрузку..."
-# Здесь IgnoreError обязателен, так как после reboot SSH-соединение обрывается с ошибкой сети
-Invoke-SSH "mtd erase ubi; reboot" -IgnoreError | Out-Null
-Write-OK "Команда выполнена. Ожидание Recovery по TFTP..."
+try {
+    Write-Host "  Стираю UBI и отправляю роутер в перезагрузку..."
+    Invoke-SSH "mtd erase ubi; reboot" -IgnoreError -Quiet
+    Write-OK "Команда выполнена. Ожидание Recovery по TFTP..."
 
-Start-Sleep -Seconds 40
-if (-not (Wait-Router -IP $RouterIP -Timeout 150 -Delay 10)) {
-    Stop-Process -Id $TftpdProc.Id -Force -ErrorAction SilentlyContinue
-    Write-Fail "Recovery-образ не поднялся. Проверьте настройки сетевой карты (192.168.1.254)."
+    Start-Sleep -Seconds 40
+    if (-not (Wait-Router -IP $RouterIP -Timeout 150 -Delay 10)) {
+        Write-Fail "Recovery-образ не поднялся. Проверьте настройки сетевой карты (192.168.1.254)."
+    }
+} finally {
+    # Сработает в любом случае, даже если внутри был Write-Fail или Ctrl+C
+    Stop-TftpServer -Process $TftpdProc
+    Write-OK "tftpd64 остановлен, конфигурация восстановлена"
 }
-
-Stop-Process -Id $TftpdProc.Id -Force -ErrorAction SilentlyContinue
 
 # ─── ФАЗА 5: ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE ─────────────────────────────────
 Write-Step "ФАЗА 5 — ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE"
@@ -225,7 +274,8 @@ Write-Host "  Загружаю $($SysupgrFile.Name)..."
 Invoke-Upload $SysupgrFile.FullName "/tmp/$($SysupgrFile.Name)"
 
 Write-Host "  Запускаю установку sysupgrade..."
-Invoke-SSH "sysupgrade -n /tmp/$($SysupgrFile.Name)" -IgnoreError | Out-Null
+Write-Host "  Роутер начнет перезагрузку через пару секунд...".
+Invoke-SSH "sysupgrade -n /tmp/$($SysupgrFile.Name)" -IgnoreError -Quiet
 
 Start-Sleep -Seconds 60
 if (Wait-Router -IP $RouterIP -Timeout 120 -Delay 5) {
