@@ -2,7 +2,7 @@
 
 Как пользоваться:
 
-1. В папку firmware\ положить 4 переименованных файла OpenWrt. Например, для NX31 ссылки на файлы для OpenWRT 24.10.1:
+1. В папку firmware\ положить 4 переименованных файла OpenWrt. Пример имен файлов и ссылок для их скачивания для установки OpenWRT 24.10.1 на NX31:
 
 [openwrt-mediatek-filogic-netis_nx31-bl31-uboot.fip](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-bl31-uboot.fip)  
 [openwrt-mediatek-filogic-netis_nx31-preloader.bin](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-initramfs-recovery.itb)  
