@@ -31,11 +31,11 @@
 param(
     [string]$RouterIP    = "192.168.1.1",
     [string]$User        = "admin",
-    [string]$FirmwareDir = ".\firmware",
-    [string]$BackupDir   = ".\backup",
-    [string]$PlinkPath   = ".\putty-64bit-0.84-plink-pscp\plink.exe",
-    [string]$PscpPath    = ".\putty-64bit-0.84-plink-pscp\pscp.exe",
-    [string]$Tftpd64Path = ".\tftpd64_portable_v4.74\tftpd64.exe"
+    [string]$FirmwareDir = "$PSScriptRoot\firmware",
+    [string]$BackupDir   = "$PSScriptRoot\backup",
+    [string]$PlinkPath   = "$PSScriptRoot\putty-64bit-0.84-plink-pscp\plink.exe",
+    [string]$PscpPath    = "$PSScriptRoot\putty-64bit-0.84-plink-pscp\pscp.exe",
+    [string]$Tftpd64Path = "$PSScriptRoot\tftpd64_portable_v4.74\tftpd64.exe"
 )
 
 Set-StrictMode -Version Latest
