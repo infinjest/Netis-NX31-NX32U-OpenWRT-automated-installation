@@ -2,6 +2,8 @@
 
 Как пользоваться:
 
+0. Скачать архив (Code > Download ZIP). Создать пустую папку с отсутствием кириллицы в пути, скопировать в нее файлы и папки репозитория.
+
 1. В папку firmware\ положить 4 переименованных файла OpenWrt. Пример имен файлов и ссылок для их скачивания для установки OpenWRT 24.10.1 на NX31:
 
 [openwrt-mediatek-filogic-netis_nx31-bl31-uboot.fip](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-bl31-uboot.fip)  
@@ -13,12 +15,13 @@
 
 3. Настроить IP сетевого адаптера: **192.168.1.254 / 255.255.255.0**
   
-4. Разрешить запуск скрипта (один раз в PowerShell от администратора):
+4. Открыть PowerShell с правами администратора и разрешить запуск скрипта:
 ```PowerShell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-5. Запустить:
+5. Перейти в папку из п. 0 и запустить скрипт:
 ```PowerShell
+cd <путь к папке>
 .\nx3X_flash_openwrt.ps1
 ```
