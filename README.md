@@ -7,8 +7,8 @@
 1. В папку firmware\ положить 4 переименованных файла OpenWrt. Пример имен файлов и ссылок для их скачивания для установки OpenWRT 24.10.1 на NX31:
 
 [openwrt-mediatek-filogic-netis_nx31-bl31-uboot.fip](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-bl31-uboot.fip)  
-[openwrt-mediatek-filogic-netis_nx31-preloader.bin](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-initramfs-recovery.itb)  
-[openwrt-mediatek-filogic-netis_nx31-initramfs-recovery.itb](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-preloader.bin)  
+[openwrt-mediatek-filogic-netis_nx31-initramfs-recovery.itb](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-initramfs-recovery.itb)  
+[openwrt-mediatek-filogic-netis_nx31-preloader.bin](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-preloader.bin)  
 [openwrt-mediatek-filogic-netis_nx31-squashfs-sysupgrade.itb](https://archive.openwrt.org/releases/24.10.1/targets/mediatek/filogic/openwrt-24.10.1-mediatek-filogic-netis_nx31-squashfs-sysupgrade.itb)  
 
 2. Файл firmware\sha256sums либо удалить для пропуска проверки хеш-сумм, либо заменить в нем строки на sha256sums хеш-суммы скачанных файлов.
