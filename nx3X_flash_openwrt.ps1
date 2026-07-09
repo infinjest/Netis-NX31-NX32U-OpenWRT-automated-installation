@@ -105,7 +105,8 @@ $Password = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
 # ─── Вспомогательные функции SSH/SCP ─────────────────────────────────────────
 function Invoke-SSH {
     param([string]$Cmd, [switch]$IgnoreError, [switch]$Quiet)
-    $out      = & $PlinkPath -ssh -pw $Password -batch -no-antispoof "$User@$RouterIP" $Cmd 2>&1
+    Clear-PuttyHostKey -IP $RouterIP
+    $out      = "y" | & $PlinkPath -ssh -pw $Password -no-antispoof "$User@$RouterIP" $Cmd 2>&1
     $exitCode = $LASTEXITCODE
 
     if ($exitCode -ne 0 -and -not $IgnoreError) {
@@ -157,6 +158,17 @@ function Wait-Router {
     }
     Write-Host " время вышло!"
     return $false
+}
+
+function Clear-PuttyHostKey {
+    param([string]$IP)
+    $keyPath = "HKCU:\Software\SimonTatham\PuTTY\SshHostKeys"
+    if (Test-Path $keyPath) {
+        Get-ItemProperty $keyPath -ErrorAction SilentlyContinue |
+            Get-Member -MemberType NoteProperty |
+            Where-Object { $_.Name -like "*@22:$IP" } |
+            ForEach-Object { Remove-ItemProperty $keyPath -Name $_.Name -ErrorAction SilentlyContinue }
+    }
 }
 
 # ─── Управление tftpd64 ───────────────────────────────────────────────────────
