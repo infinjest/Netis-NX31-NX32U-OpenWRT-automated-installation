@@ -31,13 +31,11 @@ function Write-Fail  { param($msg) Write-Host "  [X]  $msg" -ForegroundColor Red
 # ─── Проверка зависимостей и сети ─────────────────────────────────────────────
 Write-Step "ПРОВЕРКА ЗАВИСИМОСТЕЙ И СЕТИ"
 
-# Проверка файлов утилит
 foreach ($tool in @($PlinkPath, $PscpPath, $Tftpd64Path)) {
     if (-not (Test-Path $tool)) { Write-Fail "Не найден: $tool" }
     Write-OK "Утилита найдена: $(Split-Path $tool -Leaf)"
 }
 
-# Пинг роутера до начала работы
 if (-not (Test-Connection -ComputerName $RouterIP -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
     Write-Fail "Роутер $RouterIP недоступен. Проверьте кабель и настройки сети."
 }
@@ -87,7 +85,6 @@ if ($SumsFile) {
 
     foreach ($fwFile in @($FipFile, $PreloaderFile, $RecoveryFile, $SysupgrFile)) {
         $actualHash = (Get-FileHash -Path $fwFile.FullName -Algorithm SHA256).Hash.ToLower()
-
         if ($SumsData -match $actualHash) {
             Write-OK "$($fwFile.Name) (оригинальность подтверждена)"
         } else {
@@ -102,11 +99,31 @@ $SecPwd   = Read-Host "Введите SSH-пароль роутера ($User@$Ro
 $Password = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
             [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecPwd))
 
+# ─── Кэш SSH-ключей PuTTY ────────────────────────────────────────────────────
+# Вызывается ровно дважды: после ввода пароля и в начале Фазы 5.
+# Чистит устаревший ключ роутера и принимает новый без интерактивного диалога.
+# plink и pscp используют один реестровый кэш, поэтому одного вызова достаточно
+# для обоих инструментов.
+function Accept-RouterKey {
+    Write-Host "  Обновление SSH-ключа роутера в кэше PuTTY..." -ForegroundColor DarkGray
+    $keyPath = "HKCU:\Software\SimonTatham\PuTTY\SshHostKeys"
+    if (Test-Path $keyPath) {
+        Get-ItemProperty $keyPath -ErrorAction SilentlyContinue |
+            Get-Member -MemberType NoteProperty |
+            Where-Object { $_.Name -like "*@22:$RouterIP" } |
+            ForEach-Object { Remove-ItemProperty $keyPath -Name $_.Name -ErrorAction SilentlyContinue }
+    }
+    # Без -batch: нужен интерактивный режим, чтобы plink спросил и получил "y"
+    "y" | & $PlinkPath -ssh -pw $Password "$User@$RouterIP" "exit" 2>&1 | Out-Null
+}
+
+Accept-RouterKey
+
 # ─── Вспомогательные функции SSH/SCP ─────────────────────────────────────────
 function Invoke-SSH {
     param([string]$Cmd, [switch]$IgnoreError, [switch]$Quiet)
-    Clear-PuttyHostKey -IP $RouterIP
-    $out      = "y" | & $PlinkPath -ssh -pw $Password -no-antispoof "$User@$RouterIP" $Cmd 2>&1
+    # -batch: запрет интерактивных вопросов; ключ уже в кэше после Accept-RouterKey
+    $out      = & $PlinkPath -ssh -pw $Password -batch -no-antispoof "$User@$RouterIP" $Cmd 2>&1
     $exitCode = $LASTEXITCODE
 
     if ($exitCode -ne 0 -and -not $IgnoreError) {
@@ -136,7 +153,12 @@ function Invoke-Upload {
         return
     }
 
-    $RemoteHash = ($sshResult.Output -split '\s+')[0].ToLower()
+    # Ищем ровно 64 hex-символа — независимо от любого мусора в выводе роутера
+    if ($sshResult.Output -match '([a-f0-9]{64})') {
+        $RemoteHash = $matches[1]
+    } else {
+        Write-Fail "Не удалось извлечь хэш из ответа роутера.`nВывод: $($sshResult.Output)"
+    }
 
     if ($LocalHash -ne $RemoteHash) {
         Write-Fail "Нарушена целостность при передаче ($Remote)!`nЛокальный: $LocalHash`nНа роутере: $RemoteHash"
@@ -160,17 +182,6 @@ function Wait-Router {
     return $false
 }
 
-function Clear-PuttyHostKey {
-    param([string]$IP)
-    $keyPath = "HKCU:\Software\SimonTatham\PuTTY\SshHostKeys"
-    if (Test-Path $keyPath) {
-        Get-ItemProperty $keyPath -ErrorAction SilentlyContinue |
-            Get-Member -MemberType NoteProperty |
-            Where-Object { $_.Name -like "*@22:$IP" } |
-            ForEach-Object { Remove-ItemProperty $keyPath -Name $_.Name -ErrorAction SilentlyContinue }
-    }
-}
-
 # ─── Управление tftpd64 ───────────────────────────────────────────────────────
 function Start-TftpServer {
     param(
@@ -182,22 +193,18 @@ function Start-TftpServer {
     $TftpdDir = Split-Path $TftpdPath -Parent
     $TftpdIni = Join-Path $TftpdDir "tftpd64.ini"
 
-    # Сохраняем оригинал для восстановления в Stop-TftpServer
     $script:IniPath   = $TftpdIni
     $script:IniBackup = if (Test-Path $TftpdIni) { Get-Content $TftpdIni -Raw } else { $null }
 
-    # Патчим только нужные ключи — всё остальное оставляем как есть.
-    # Если ini не существует — создаём минимальную секцию.
+    # Патчим только два ключа — всё остальное оставляем как есть
     $ini = if ($script:IniBackup) { $script:IniBackup } else { "[TFTPD32]`r`n" }
 
-    # BaseDirectory: задаём абсолютный путь, чтобы не зависеть от рабочей директории tftpd64
     if ($ini -match '(?m)^BaseDirectory=') {
         $ini = $ini -replace '(?m)^BaseDirectory=.*$', "BaseDirectory=$Root"
     } else {
         $ini = $ini -replace '(?m)^\[TFTPD32\]', "[TFTPD32]`r`nBaseDirectory=$Root"
     }
 
-    # LocalIP: привязка к нужному сетевому интерфейсу
     if ($ini -match '(?m)^LocalIP=') {
         $ini = $ini -replace '(?m)^LocalIP=.*$', "LocalIP=$BindIP"
     } else {
@@ -217,7 +224,6 @@ function Stop-TftpServer {
         Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
     }
 
-    # Восстанавливаем оригинальный ini
     if ($null -ne $script:IniBackup) {
         Set-Content -Path $script:IniPath -Value $script:IniBackup -Encoding ASCII -NoNewline
     } elseif (Test-Path $script:IniPath) {
@@ -258,12 +264,10 @@ Invoke-Upload $FipFile.FullName "/tmp/$($FipFile.Name)"
 Write-Host "  Загружаю $($PreloaderFile.Name)..."
 Invoke-Upload $PreloaderFile.FullName "/tmp/$($PreloaderFile.Name)"
 
-# Прошивка FIP — обязательный шаг, при ошибке скрипт остановится
 Write-Host "  Запись $($FipFile.Name) в раздел FIP..."
 Invoke-SSH "mtd write /tmp/$($FipFile.Name) FIP" -Quiet
 Write-OK "Раздел FIP успешно обновлён"
 
-# Прошивка BL2 — на стоке Netis раздел может быть защищён от записи
 Write-Host "  Запись $($PreloaderFile.Name) в раздел BL2..."
 $bl2Result = Invoke-SSH "mtd write /tmp/$($PreloaderFile.Name) BL2" -IgnoreError
 
@@ -290,6 +294,7 @@ try {
 
     Start-Sleep -Seconds 40
     if (-not (Wait-Router -IP $RouterIP -Timeout 150 -Delay 10)) {
+		Stop-TftpServer -Process $TftpdProc
         Write-Fail "Recovery-образ не поднялся. Проверьте настройки сетевой карты (192.168.1.254)."
     }
 } finally {
@@ -300,6 +305,9 @@ try {
 
 # ─── ФАЗА 5: ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE ─────────────────────────────────
 Write-Step "ФАЗА 5 — ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE"
+
+# После перезагрузки в Recovery у роутера новый SSH-ключ — обновляем кэш
+Accept-RouterKey
 
 Write-Host "  Загружаю $($SysupgrFile.Name)..."
 Invoke-Upload $SysupgrFile.FullName "/tmp/$($SysupgrFile.Name)"
