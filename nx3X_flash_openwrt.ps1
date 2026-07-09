@@ -73,6 +73,22 @@ $PreloaderFile = Find-Fw "*preloader.bin"
 $RecoveryFile  = Find-Fw "*initramfs-recovery.itb"
 $SysupgrFile   = Find-Fw "*squashfs-sysupgrade.itb"
 
+# ─── Убираем номер версии из имён файлов (нужно для TFTP и единообразия) ──────
+function Rename-FwFile { param($File)
+    $newName = $File.Name -replace 'openwrt-[\d.]+-', 'openwrt-'
+    if ($File.Name -ne $newName) {
+        Rename-Item $File.FullName $newName
+        Write-OK "Переименован: $($File.Name) → $newName"
+        return Get-Item (Join-Path $FirmwareDir $newName)
+    }
+    return $File
+}
+
+$FipFile       = Rename-FwFile $FipFile
+$PreloaderFile = Rename-FwFile $PreloaderFile
+$RecoveryFile  = Rename-FwFile $RecoveryFile
+$SysupgrFile   = Rename-FwFile $SysupgrFile
+
 Write-OK "Файлы прошивки найдены"
 
 # ─── Проверка по официальному файлу sha256sums (если он есть в папке) ─────────
