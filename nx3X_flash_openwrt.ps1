@@ -11,7 +11,9 @@ param(
     [string]$BackupDir   = "$PSScriptRoot\backup",
     [string]$PlinkPath   = "$PSScriptRoot\putty-64bit-0.84-plink-pscp\plink.exe",
     [string]$PscpPath    = "$PSScriptRoot\putty-64bit-0.84-plink-pscp\pscp.exe",
-    [string]$Tftpd64Path = "$PSScriptRoot\tftpd64_portable_v4.74\tftpd64.exe"
+    [string]$Tftpd64Path = "$PSScriptRoot\tftpd64_portable_v4.74\tftpd64.exe",
+	[string]$OwrtUser = "root",
+    [string]$OwrtPassword = ""
 )
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -321,6 +323,11 @@ try {
 
 # ─── ФАЗА 5: ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE ─────────────────────────────────
 Write-Step "ФАЗА 5 — ЗАГРУЗКА И УСТАНОВКА SYSUPGRADE"
+
+# OpenWrt recovery: root без пароля
+Write-Host "  Переключение учетных данных на OpenWrt (root)..." -ForegroundColor DarkGray
+$User     = $OwrtUser
+$Password = $OwrtPassword
 
 # После перезагрузки в Recovery у роутера новый SSH-ключ — обновляем кэш
 Accept-RouterKey
