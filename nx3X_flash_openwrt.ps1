@@ -245,7 +245,6 @@ if ($bl2Result.ExitCode -ne 0) {
 Write-Step "ФАЗА 4 — ЗАПУСК TFTP, СТИРАНИЕ UBI, ПЕРЕЗАГРУЗКА"
 
 $TftpRoot = $FirmwareDir
-Copy-Item $RecoveryFile.FullName (Join-Path $TftpRoot $RecoveryFile.Name) -Force
 
 Write-Host "  Запускаю tftpd64..."
 $TftpdProc = Start-TftpServer -Root $TftpRoot -TftpdPath $Tftpd64Path
@@ -259,10 +258,12 @@ try {
 
     Start-Sleep -Seconds 40
     if (-not (Wait-Router -IP $RouterIP -Timeout 150 -Delay 10)) {
+        # Явный останов как защита на случай, если finally не сработает (Ctrl+C в некоторых хостах)
+        Stop-TftpServer -Process $TftpdProc
         Write-Fail "Recovery-образ не поднялся. Проверьте настройки сетевой карты (192.168.1.254)."
     }
 } finally {
-    # Сработает в любом случае, даже если внутри был Write-Fail или Ctrl+C
+    # Сработает при штатном прохождении try или если скрипт прервут через Ctrl+C
     Stop-TftpServer -Process $TftpdProc
     Write-OK "tftpd64 остановлен, конфигурация восстановлена"
 }
@@ -274,7 +275,7 @@ Write-Host "  Загружаю $($SysupgrFile.Name)..."
 Invoke-Upload $SysupgrFile.FullName "/tmp/$($SysupgrFile.Name)"
 
 Write-Host "  Запускаю установку sysupgrade..."
-Write-Host "  Роутер начнет перезагрузку через пару секунд...".
+Write-Host "  Роутер начнет перезагрузку через пару секунд..." # Исправлено (точка внутри кавычек)
 Invoke-SSH "sysupgrade -n /tmp/$($SysupgrFile.Name)" -IgnoreError -Quiet
 
 Start-Sleep -Seconds 60
